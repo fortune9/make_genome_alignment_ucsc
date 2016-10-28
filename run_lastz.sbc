@@ -1,0 +1,53 @@
+#!/bin/bash
+
+#SBATCH -A presgraves
+#SBATCH -p standard
+#SBATCH -o logs/lastz.%A.%a.out # major_jobid.task_array_id
+#SBATCH -e logs/lastz.%A.%a.err
+#SBATCH -n 1
+#SBATCH -t 5:00:00
+#SBATCH --mail-type=ALL
+
+set -e
+
+in=tmp/task_input
+arrayID=$SLURM_ARRAY_TASK_ID
+
+read counter T Q < <(sed -n -e "${arrayID} p" $in)
+
+if [[ (-z $counter) || (-z $T) || (-z $Q) ]]; then
+	echo "No data read for $arrayID" 1>&2
+	exit 1;
+fi
+
+#counter=$1
+#T=$2 # target segment fasta file
+#Q=$3 # query segment fasta file
+
+echo $arrayID: $counter '->'  $T vs $Q 1>&2
+echo $arrayID: $counter '->'  $T vs $Q
+
+if [[ (! -s $T) || (! -s $Q) ]]; then
+	echo $T or $Q does not exist
+	exit 1;
+fi
+
+# $lastzParams inherit from parent environment
+echo "start running lastz $T $Q $lastzParams"
+lastz $T $Q $lastzParams \
+      >raw/$counter.lav
+
+echo "Start lavToPsl raw/$counter.lav"
+lavToPsl raw/$counter.lav stdout \
+   | liftUp -type=.psl stdout target.lift error stdin \
+   | liftUp -nohead -pslQ -type=.psl stdout query.lift error stdin \
+   | gzip -c >psl/$counter.psl.gz
+
+# $TARGET and $QUERY are .2bit files
+# now convert psl to chain format
+zcat psl/$counter.psl.gz | axtChain -psl -verbose=0 ${chainParams} \
+ stdin ${TARGET} ${QUERY} stdout | chainAntiRepeat ${TARGET} ${QUERY} \
+ stdin chain/$counter.chain
+
+exit 0;
+
